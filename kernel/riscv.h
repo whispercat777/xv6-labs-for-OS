@@ -8,7 +8,20 @@ r_mhartid()
   asm volatile("csrr %0, mhartid" : "=r" (x) );
   return x;
 }
-
+static inline uint64
+r_sp()
+{
+  uint64 x;
+  asm volatile("mv %0, sp" : "=r" (x) );
+  return x;
+}
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x) );
+  return x;
+}
 // Machine Status Register, mstatus
 
 #define MSTATUS_MPP_MASK (3L << 11) // previous mode.
@@ -285,14 +298,6 @@ intr_get()
 {
   uint64 x = r_sstatus();
   return (x & SSTATUS_SIE) != 0;
-}
-
-static inline uint64
-r_sp()
-{
-  uint64 x;
-  asm volatile("mv %0, sp" : "=r" (x) );
-  return x;
 }
 
 // read and write tp, the thread pointer, which xv6 uses to hold

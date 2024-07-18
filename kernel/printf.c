@@ -133,3 +133,18 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+// Function to print the stack backtrace
+void backtrace(void) {
+  // Get the current frame pointer address
+  uint64 fp_address = r_fp();
+
+  // Loop until the frame pointer address is not on the same page
+  while(fp_address != PGROUNDDOWN(fp_address)) {
+    // Print the return address of the current stack frame
+    printf("%p\n", *(uint64*)(fp_address - 8));
+    
+    // Update the frame pointer address to the previous frame's frame pointer
+    fp_address = *(uint64*)(fp_address - 16);
+  }
+}
+
