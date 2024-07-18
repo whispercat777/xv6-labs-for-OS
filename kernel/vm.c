@@ -437,3 +437,31 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+static int printdeep = 0; // 用于跟踪当前递归深度的静态变量
+void vmprint(pagetable_t pagetable) {
+  // 如果是初始调用（递归深度为0），打印页表地址
+  if (printdeep == 0)
+    printf("page table %p\n", (uint64)pagetable);
+  // 遍历页表的512个条目
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i]; // 获取页表条目
+    // 如果页表条目有效（PTE_V位被设置）
+    if (pte & PTE_V) {
+      // 根据当前递归深度打印缩进
+      for (int j = 0; j <= printdeep; j++) {
+        printf("..");
+      }
+      // 打印页表条目的索引、页表条目值和物理地址
+      printf("%d: pte %p pa %p\n", i, (uint64)pte, (uint64)PTE2PA(pte));
+    }
+    // 如果页表条目有效且指向的是下一级页表（PTE_R、PTE_W和PTE_X位均未设置）
+    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      printdeep++; // 增加递归深度
+      uint64 child_pa = PTE2PA(pte); // 获取下一级页表的物理地址
+      vmprint((pagetable_t)child_pa); // 递归打印下一级页表
+      printdeep--; // 递归完成后减少递归深度
+    }
+  }
+}
+

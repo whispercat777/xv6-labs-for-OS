@@ -173,7 +173,8 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
-
+//将函数 vmprint 的声明放到 kernel/defs.h 中，以便可以在 exec.c 中调用它
+void            vmprint(pagetable_t);
 // plic.c
 void            plicinit(void);
 void            plicinithart(void);
