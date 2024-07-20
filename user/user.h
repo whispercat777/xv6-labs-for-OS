@@ -1,6 +1,7 @@
 struct stat;
 
 // system calls
+int symlink(char *target, char *path);
 int fork(void);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
