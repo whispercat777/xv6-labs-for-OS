@@ -16,6 +16,7 @@ struct entry {
 struct entry *table[NBUCKET];
 int keys[NKEYS];
 int nthread = 1;
+pthread_mutex_t lock[NBUCKET]; //创建一个互斥锁数组 lock用于保护相应的桶
 
 
 double
@@ -51,8 +52,11 @@ void put(int key, int value)
     // update the existing key.
     e->value = value;
   } else {
+    pthread_mutex_lock(&lock[i]);
+    // 重要的是 table[i] 的值 如果thread1刚进入 但thread_2已经修改了 table[i]就会丢失后面的所有node
     // the new is new.
     insert(key, value, &table[i], table[i]);
+    pthread_mutex_unlock(&lock[i]);
   }
 
 }
@@ -117,7 +121,8 @@ main(int argc, char *argv[])
   for (int i = 0; i < NKEYS; i++) {
     keys[i] = random();
   }
-
+  for (int i = 0; i < NBUCKET; ++i)//初始化一组互斥锁
+    pthread_mutex_init(&lock[i], NULL);
   //
   // first the puts
   //

@@ -26,7 +26,25 @@ static void
 barrier()
 {
   // YOUR CODE HERE
-  //
+  pthread_mutex_lock(&bstate.barrier_mutex); 
+
+  bstate.nthread++;
+  // 如果到达屏障的线程数还不到总线程数，等待其他线程到达
+  if (bstate.nthread < nthread) {
+   // 线程会在这里被阻塞，直到条件变量被广播
+      pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+  }
+
+  if (bstate.nthread == nthread) {// 如果所有线程都已到达屏障
+      bstate.round++;
+       // 重置到达屏障的线程数为0，准备下一轮的屏障
+      bstate.nthread = 0;
+      // 广播信号，唤醒所有等待在条件变量上的线程
+      pthread_cond_broadcast(&bstate.barrier_cond);
+  }
+
+  pthread_mutex_unlock(&bstate.barrier_mutex); 
+
   // Block until all threads have called barrier() and
   // then increment bstate.round.
   //
