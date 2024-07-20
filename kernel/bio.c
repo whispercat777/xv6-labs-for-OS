@@ -22,71 +22,79 @@
 #include "defs.h"
 #include "fs.h"
 #include "buf.h"
+#define NBUCKET 13  // 可以根据需要选择适当的桶数
+
 
 struct {
   struct spinlock lock;
-  struct buf buf[NBUF];
-
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
-  struct buf head;
+  struct buf head[NBUCKET];
+  struct buf hash[NBUCKET][NBUF];
+  struct spinlock hashlock[NBUCKET];
 } bcache;
 
 void
 binit(void)
 {
-  struct buf *b;
+    struct buf* b;
 
-  initlock(&bcache.lock, "bcache");
+    initlock(&bcache.lock, "bcache");
+    //初始化每个bucket的锁和缓冲区链表
+    for (int i = 0; i < NBUCKET; i++) {
+        initlock(&bcache.hashlock[i], "bcache");
 
-  // Create linked list of buffers
-  bcache.head.prev = &bcache.head;
-  bcache.head.next = &bcache.head;
-  for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
-  }
+        // Create linked list of buffers
+        bcache.head[i].prev = &bcache.head[i];
+        bcache.head[i].next = &bcache.head[i];
+        for (b = bcache.hash[i]; b < bcache.hash[i] + NBUF; b++) {
+            b->next = bcache.head[i].next;
+            b->prev = &bcache.head[i];
+            initsleeplock(&b->lock, "buffer");
+            bcache.head[i].next->prev = b;
+            bcache.head[i].next = b;
+        }
+    }
 }
-
 // Look through buffer cache for block on device dev.
 // If not found, allocate a buffer.
 // In either case, return locked buffer.
 static struct buf*
 bget(uint dev, uint blockno)
 {
-  struct buf *b;
+    struct buf* b;
+    //计算哈希码并锁定桶
+    uint hashcode = blockno % NBUCKET;
+    acquire(&bcache.hashlock[hashcode]);
 
-  acquire(&bcache.lock);
-
-  // Is the block already cached?
-  for(b = bcache.head.next; b != &bcache.head; b = b->next){
-    if(b->dev == dev && b->blockno == blockno){
-      b->refcnt++;
-      release(&bcache.lock);
-      acquiresleep(&b->lock);
-      return b;
+    // Is the block already cached?
+    for (b = bcache.head[hashcode].next; b != &bcache.head[hashcode]; b = b->next) {
+        if (b->dev == dev && b->blockno == blockno) {
+            b->refcnt++;
+            release(&bcache.hashlock[hashcode]);//释放桶的自旋锁
+            acquiresleep(&b->lock);//取缓冲区的自旋锁
+            return b;
+        }
     }
-  }
 
-  // Not cached.
-  // Recycle the least recently used (LRU) unused buffer.
-  for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
-    if(b->refcnt == 0) {
-      b->dev = dev;
-      b->blockno = blockno;
-      b->valid = 0;
-      b->refcnt = 1;
-      release(&bcache.lock);
-      acquiresleep(&b->lock);
-      return b;
+    // Not cached.
+    // Recycle the least recently used (LRU) unused buffer.
+    for (b = bcache.head[hashcode].prev; b != &bcache.head[hashcode]; b = b->prev) {
+        if (b->refcnt == 0) {
+            b->dev = dev;
+            b->blockno = blockno;
+            b->valid = 0;
+            b->refcnt = 1;
+            release(&bcache.hashlock[hashcode]);
+            acquiresleep(&b->lock);
+            return b;
+        }
     }
-  }
-  panic("bget: no buffers");
+    release(&bcache.hashlock[hashcode]);
+    panic("bget: no buffers");
 }
+
 
 // Return a locked buf with the contents of the indicated block.
 struct buf*
@@ -114,26 +122,27 @@ bwrite(struct buf *b)
 // Release a locked buffer.
 // Move to the head of the most-recently-used list.
 void
-brelse(struct buf *b)
+brelse(struct buf* b)
 {
-  if(!holdingsleep(&b->lock))
-    panic("brelse");
+    if (!holdingsleep(&b->lock))
+        panic("brelse");
 
-  releasesleep(&b->lock);
+    releasesleep(&b->lock);
 
-  acquire(&bcache.lock);
-  b->refcnt--;
-  if (b->refcnt == 0) {
-    // no one is waiting for it.
-    b->next->prev = b->prev;
-    b->prev->next = b->next;
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
-  }
-  
-  release(&bcache.lock);
+    uint hashcode = b->blockno % NBUCKET;//计算缓冲区所在的桶
+    acquire(&bcache.hashlock[hashcode]);//获取该桶的自旋锁
+    b->refcnt--;
+    if (b->refcnt == 0) {
+        // no one is waiting for it.
+        b->next->prev = b->prev;
+        b->prev->next = b->next;
+        b->next = bcache.head[hashcode].next;
+        b->prev = &bcache.head[hashcode];
+        bcache.head[hashcode].next->prev = b;
+        bcache.head[hashcode].next = b;
+    }
+
+    release(&bcache.hashlock[hashcode]);//释放桶的自旋锁
 }
 
 void
