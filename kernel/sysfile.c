@@ -168,6 +168,7 @@ bad:
   end_op();
   return -1;
 }
+
 // Is the directory dp empty except for "." and ".." ?
 static int
 isdirempty(struct inode *dp)
@@ -333,43 +334,35 @@ sys_open(void)
       return -1;
     }
   }
-  // 当没有 NOFOLLOW 标志时，对于 SYMLINK 文件，默认的行为是打开的链接过去的 target 文件
-  if ((omode & O_NOFOLLOW) == 0) {
-    struct inode *dp;
-    char target[MAXPATH];
-    int i;
-    for (i = 0; i < 10 && ip->type == T_SYMLINK; i++) {
-      // 从 inode 读取数据
-      if (readi(ip, 0, (uint64)target, 0, MAXPATH) == 0) {
-        iunlockput(ip);
-        end_op();
-        return -1;
-      }
-      // 读取 target 的 inode
-      dp = namei(target);
-      if (dp == 0) {
+  if (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    int tolerate = 10;
+    while (ip->type == T_SYMLINK && tolerate > 0) {
+      if(readi(ip, 0, (uint64)path, 0, ip->size) != ip->size) {
         iunlockput(ip);
         end_op();
         return -1;
       }
       iunlockput(ip);
-      ip = dp;
+      if((ip = namei(path)) == 0) {
+        end_op();
+        return -1;
+      }
       ilock(ip);
+      tolerate--;
     }
-    // 如果 10 轮循环后也没找到 target 原文件
-    if (i == 10) {
+    // cycle symlink is not allowed
+    if (tolerate == 0) {
       iunlockput(ip);
       end_op();
       return -1;
     }
   }
-
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
     return -1;
   }
-  
+
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -385,7 +378,6 @@ sys_open(void)
     f->type = FD_INODE;
     f->off = 0;
   }
-  
   f->ip = ip;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
@@ -399,6 +391,7 @@ sys_open(void)
 
   return fd;
 }
+
 
 uint64
 sys_mkdir(void)
@@ -533,43 +526,35 @@ sys_pipe(void)
   }
   return 0;
 }
-uint64 
+
+uint64
 sys_symlink(void)
 {
-  char target[MAXPATH], path[MAXPATH];  // 在 path 上创建一个 symlink 指向 target
-  struct inode *dp, *ip;
+  char target[MAXPATH];
+  char path[MAXPATH];
+  struct inode *ip;
+  int n;
 
-  // 校验并绑定参数
-  if (argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
+  if((n = argstr(0, target, MAXPATH)) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+
+  // create a new symlink, return with a locked inode
+  ip = create(path, T_SYMLINK, 0, 0);
+  if(ip == 0){
+      end_op();
+      return -1;
+  }
+
+  // write the target into the symlink's data block
+  if(writei(ip, 0, (uint64)target, 0, n) != n) {
+    end_op();
     return -1;
   }
 
-  begin_op();  // 开始一个文件系统操作
-
-  // 校验 target 是否合法
-  if ((ip = namei(target)) != 0 && ip->type == T_DIR) {
-    end_op();
-    goto bad;
-  }
-
-  // 创建 symlink 文件
-  dp = create(path, T_SYMLINK, 0, 0);  // 这一步会同时为 inode 加锁
-  if (dp == 0) {
-    goto bad;
-  }
-
-  // 在 symlink 文件中写入 target 信息
-  int targetLen = strlen(target);
-  if (writei(dp, 0, (uint64)target, 0, targetLen) != targetLen) {
-    panic("symlink: writei");  // 模仿 sys_unlink() 函数中的写法
-  }
-
-  iunlockput(dp);  // 释放 inode 的 lock
+  iunlockput(ip);
   end_op();
   return 0;
-
-bad:
-  end_op();
-  return -1;
 }
 
