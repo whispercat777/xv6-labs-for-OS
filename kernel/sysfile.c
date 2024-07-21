@@ -125,7 +125,7 @@ sys_link(void)
 {
   char name[DIRSIZ], new[MAXPATH], old[MAXPATH];
   struct inode *dp, *ip;
-
+//从用户空间获取两个路径参数，old 表示已有文件，new 表示新链接的路径
   if(argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
     return -1;
 
@@ -136,12 +136,13 @@ sys_link(void)
   }
 
   ilock(ip);
+  // 如果 old 是目录，则不允许创建链接，释放 inode 锁并返回错误
   if(ip->type == T_DIR){
     iunlockput(ip);
     end_op();
     return -1;
   }
-
+  // 增加链接计数，并更新 inode
   ip->nlink++;
   iupdate(ip);
   iunlock(ip);
@@ -149,6 +150,7 @@ sys_link(void)
   if((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
+  //链接必须在同一个设备上，且创建目录项指向 old 文件的 inode
   if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
     iunlockput(dp);
     goto bad;
@@ -159,7 +161,7 @@ sys_link(void)
   end_op();
 
   return 0;
-
+  // 如果出现错误，恢复 old 文件的链接计数，并释放 inode
 bad:
   ilock(ip);
   ip->nlink--;
@@ -335,9 +337,10 @@ sys_open(void)
     }
   }
   if (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
-    int tolerate = 10;
+    int tolerate = 10; // 设置符号链接解析的最大深度，防止无限循环
     while (ip->type == T_SYMLINK && tolerate > 0) {
       if(readi(ip, 0, (uint64)path, 0, ip->size) != ip->size) {
+      //读取符号链接的目标路径到变量 path 中
         iunlockput(ip);
         end_op();
         return -1;
@@ -350,7 +353,7 @@ sys_open(void)
       ilock(ip);
       tolerate--;
     }
-    // cycle symlink is not allowed
+    //如果达到最大解析深度，返回错误，因为符号链接形成了循环
     if (tolerate == 0) {
       iunlockput(ip);
       end_op();
