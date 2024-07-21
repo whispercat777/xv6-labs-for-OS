@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "mman.h"
 
 struct cpu cpus[NCPU];
 
@@ -307,7 +308,12 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
-
+  
+  memmove((char*)np->vma,(char*)p->vma,sizeof p->vma);//拷贝VMA
+  for(int i = 0; i < 16 ;i++)//增加引用
+    if(np->vma[i].addr) 
+      filedup(np->vma[i].file);
+      
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -357,6 +363,18 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+  // 添加处理 VMA 的代码
+  for(int i = 0; i < 16; i++){
+    if(p->vma[i].addr){
+      int len = p->vma[i].length - p->vma[i].free_len;
+      uint64 addr = p->vma[i].addr + p->vma[i].free_len;
+      if(p->vma[i].flags & MAP_SHARED)//需要写回
+        filewrite(p->vma[i].file, addr, len);
+      uvmunmap(p->pagetable, addr, len/PGSIZE, 1);//释放映射
+      fileclose(p->vma[i].file);
+      p->vma[i].addr = 0;
     }
   }
 
